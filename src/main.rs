@@ -41,7 +41,8 @@ where
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Stats {
-	memory: (usize, usize), // Used and available
+	memory: Option<(usize, usize)>, // Used and available
+	cpu_usage: Option<f32>,
 }
 
 fn split(src: &str) -> impl Iterator<Item = &str> {
@@ -80,20 +81,14 @@ fn get_memory() -> Option<(usize, usize)> {
 }
 
 fn get_cpu_usage() -> Option<f32> {
-	let proc = Command::new("iostat")
-		.args(["-c", "-y"])
-		.stdout(Stdio::piped())
-		.output().expect("Couldn't Create Thread")
-		.stdout;
-
-	if let Ok(output) = String::from_utf8(proc) {
-		let parts = split(&output).collect::<Vec<_>>();
-		println!("{:?}", parts);
-		// let used = parts[9].parse();
-		// let avail = parts[14].parse();
-		// if let (Ok(used), Ok(avail)) = (used, avail) {
-		// 	return Some((used, avail));
-		// }
+	if let Some(parts) = run_cmd("iostat", &["-c", "-y"]) {
+		// Base it off of the position of the "%idle" header
+		if let Some(idx) = parts.iter().position(|itm| *itm == "%idle") {
+			if let Ok(idle) = (&parts[idx + 6]).parse::<f32>() {
+				// println!("idle: {}", idle);
+				return Some(100.0 - idle);
+			}
+		}
 	}
 
 	None
@@ -107,13 +102,10 @@ fn updater(tx: mpsc::Sender<Stats>) {
 		if now > next_update {
 			next_update = now + UPDATE_TIME;
 
-			if let Some((used, avail)) = get_memory() {
-				let _ = tx.send(Stats {
-					memory: (used, avail)
-				});
-			}
-
-			// get_cpu_usage();
+			let _ = tx.send(Stats {
+				memory: get_memory(),
+				cpu_usage: get_cpu_usage(),
+			});
 		}
 	}
 }
@@ -145,6 +137,15 @@ impl<T> History<T> {
 	}
 }
 
+impl<T: Copy> History<T> {
+	/// Adds an item without updating the minimum and maximum bounds
+	fn add_unbounded(&mut self, item: T) {
+		self.idx += 1;
+		self.idx %= MAX_HIST;
+		self.hist[self.idx] = item;
+	}
+}
+
 impl<T: Copy + Ord> History<T> {
 	fn add(&mut self, item: T) {
 		self.idx += 1;
@@ -156,9 +157,10 @@ impl<T: Copy + Ord> History<T> {
 }
 
 // For any type that can be converted to f32, we can draw it
-impl<T: num_traits::AsPrimitive<f32> + Ord> History<T> {
+impl<T: std::fmt::Debug + num_traits::AsPrimitive<f32>> History<T> {
 	// TODO: Make this return a response
 	fn draw(&self, ui: &mut Ui, stroke: egui::Stroke) {
+		ui.label(format!("{}: {:?}", self.name, self.top()));
 		let size = Rect::from_min_size(Pos2::new(0.0, 0.0), Vec2::new(500.0, 200.0)).translate(ui.cursor().min.to_vec2());
 		let painter = ui.painter_at(size);
 		ui.advance_cursor_after_rect(painter.clip_rect());
@@ -169,7 +171,7 @@ impl<T: num_traits::AsPrimitive<f32> + Ord> History<T> {
 
 		painter.line(self.hist.iter().enumerate().map(|(idx, v)| {
 			let scaled_x: f32 = map(idx, 0, self.hist.len(), ax, bx);
-			let scaled_y: f32 = map(*v, self.min, self.max, ay, by);
+			let scaled_y: f32 = map(*v, self.min, self.max, by, ay);
 			Pos2::new(scaled_x, scaled_y)
 		}).collect(), stroke);
 	}
@@ -180,6 +182,7 @@ struct MyApp {
 	rx: mpsc::Receiver<Stats>,
 	used_mem: History<usize>,
 	avail_mem: History<usize>,
+	cpu_usage: History<f32>,
 }
 
 impl MyApp {
@@ -197,15 +200,19 @@ impl MyApp {
 			rx,
 			used_mem: Default::default(),
 			avail_mem: Default::default(),
+			cpu_usage: Default::default(),
 		};
 
 		obj.used_mem.name = "Used Memory";
 		obj.avail_mem.name = "Available Memory";
+		obj.cpu_usage.name = "CPU Usage";
 
 		if let Some(max) = get_max_memory() {
 			obj.used_mem.max = max;
 			obj.avail_mem.max = max;
 		}
+
+		obj.cpu_usage.max = 100.0;
 
 		obj
 	}
@@ -215,15 +222,19 @@ impl eframe::App for MyApp {
 	// This is called every time the screen updates
 	fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
 		if let Ok(resp) = self.rx.try_recv() {
-			self.used_mem.add(resp.memory.0);
-			self.avail_mem.add(resp.memory.1);
-		}
+			if let Some(mem) = resp.memory {
+				self.used_mem.add(mem.0);
+				self.avail_mem.add(mem.1);
+			}
 
-		ui.label(format!("{}", self.used_mem.top()));
-		ui.label(format!("{}", self.avail_mem.top()));
+			if let Some(cpu) = resp.cpu_usage {
+				self.cpu_usage.add_unbounded(cpu);
+			}
+		}
 
 		self.used_mem.draw(ui, egui::Stroke::new(1.0, Color32::WHITE));
 		self.avail_mem.draw(ui, egui::Stroke::new(1.0, Color32::RED));
+		self.cpu_usage.draw(ui, egui::Stroke::new(1.0, Color32::GREEN));
 
 		ui.request_repaint_after(UPDATE_TIME);
 	}
