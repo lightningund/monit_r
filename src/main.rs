@@ -13,6 +13,9 @@ static UPDATE_TIME: Duration = Duration::from_millis(200);
 fn main() -> eframe::Result {
 	println!("Hello World!");
 
+	println!("{:?}", [0, 1, 2, 3, 4, 5, 6].into_iter().rev().cycle().take(7).enumerate().collect::<Vec<(usize, i32)>>());
+	println!("{:?}", [0, 1, 2, 3, 4, 5, 6].into_iter().rev().cycle().skip(7-2).take(7).enumerate().collect::<Vec<(usize, i32)>>());
+
 	let options = eframe::NativeOptions {
 		viewport: egui::ViewportBuilder::default()
 			.with_inner_size([500.0, 1000.0])
@@ -138,6 +141,12 @@ impl<T> History<T> {
 }
 
 impl<T: Copy> History<T> {
+	fn iter(&self) -> impl Iterator<Item = &T> {
+		self.hist.iter().rev().cycle().skip(MAX_HIST - self.idx).take(MAX_HIST)
+	}
+}
+
+impl<T: Copy> History<T> {
 	/// Adds an item without updating the minimum and maximum bounds
 	fn add_unbounded(&mut self, item: T) {
 		self.idx += 1;
@@ -169,8 +178,8 @@ impl<T: std::fmt::Debug + num_traits::AsPrimitive<f32>> History<T> {
 
 		let Rect{ min: Pos2{x: ax, y: ay}, max: Pos2{x: bx, y: by} } = painter.clip_rect();
 
-		painter.line(self.hist.iter().enumerate().map(|(idx, v)| {
-			let scaled_x: f32 = map(idx, 0, self.hist.len(), ax, bx);
+		painter.line(self.iter().enumerate().map(|(idx, v)| {
+			let scaled_x: f32 = map(idx, 0, MAX_HIST, bx, ax);
 			let scaled_y: f32 = map(*v, self.min, self.max, by, ay);
 			Pos2::new(scaled_x, scaled_y)
 		}).collect(), stroke);
