@@ -1741,6 +1741,7 @@ name = "monit_r"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "num-traits",
 ]
 
 [[package]]
