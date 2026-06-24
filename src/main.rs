@@ -29,7 +29,7 @@ fn main() -> eframe::Result {
 }
 
 trait Arithmetic: Copy + Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self> + Div<Output = Self> {}
-impl<T> Arithmetic for T where T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T> {}
+impl<T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T>> Arithmetic for T {}
 
 fn map<T, U>(val: T, a_min: T, a_max: T, b_min: U, b_max: U) -> U
 where
@@ -44,15 +44,22 @@ struct Stats {
 	memory: (usize, usize), // Used and available
 }
 
-fn get_max_memory() -> Option<usize> {
-	let proc = Command::new("free")
-		.arg("-w")
+fn split(src: &str) -> impl Iterator<Item = &str> {
+	src.split(&[' ', '\t', '\n', '\r']).filter(|s| !s.is_empty())
+}
+
+fn run_cmd(cmd: &str, args: &[&str]) -> Option<Vec<String>> {
+	let proc = Command::new(cmd)
+		.args(args)
 		.stdout(Stdio::piped())
 		.output().expect("Couldn't Create Thread")
 		.stdout;
 
-	if let Ok(output) = String::from_utf8(proc) {
-		let parts = output.split(&[' ', '\n']).filter(|s| !s.is_empty()).collect::<Vec<_>>();
+	String::from_utf8(proc).map(|output| split(&output).map(|s| s.to_string()).collect()).ok()
+}
+
+fn get_max_memory() -> Option<usize> {
+	if let Some(parts) = run_cmd("free", &["-w"]) {
 		let max = parts[8].parse();
 		return max.ok();
 	}
@@ -61,19 +68,32 @@ fn get_max_memory() -> Option<usize> {
 }
 
 fn get_memory() -> Option<(usize, usize)> {
-	let proc = Command::new("free")
-		.arg("-w")
-		.stdout(Stdio::piped())
-		.output().expect("Couldn't Create Thread")
-		.stdout;
-
-	if let Ok(output) = String::from_utf8(proc) {
-		let parts = output.split(&[' ', '\n']).filter(|s| !s.is_empty()).collect::<Vec<_>>();
+	if let Some(parts) = run_cmd("free", &["-w"]) {
 		let used = parts[9].parse();
 		let avail = parts[14].parse();
 		if let (Ok(used), Ok(avail)) = (used, avail) {
 			return Some((used, avail));
 		}
+	}
+
+	None
+}
+
+fn get_cpu_usage() -> Option<f32> {
+	let proc = Command::new("iostat")
+		.args(["-c", "-y"])
+		.stdout(Stdio::piped())
+		.output().expect("Couldn't Create Thread")
+		.stdout;
+
+	if let Ok(output) = String::from_utf8(proc) {
+		let parts = split(&output).collect::<Vec<_>>();
+		println!("{:?}", parts);
+		// let used = parts[9].parse();
+		// let avail = parts[14].parse();
+		// if let (Ok(used), Ok(avail)) = (used, avail) {
+		// 	return Some((used, avail));
+		// }
 	}
 
 	None
@@ -92,6 +112,8 @@ fn updater(tx: mpsc::Sender<Stats>) {
 					memory: (used, avail)
 				});
 			}
+
+			// get_cpu_usage();
 		}
 	}
 }
@@ -99,6 +121,7 @@ fn updater(tx: mpsc::Sender<Stats>) {
 #[derive(Clone, Debug)]
 struct History<T> {
 	hist: [T; MAX_HIST],
+	name: &'static str, // Maybe could be a `String`
 	min: T,
 	max: T,
 	idx: usize,
@@ -108,8 +131,9 @@ impl<T: Default + Copy> Default for History<T> {
 	fn default() -> Self {
 		Self {
 			hist: [T::default(); MAX_HIST],
-			min: T::default(),
-			max: T::default(),
+			name: Default::default(),
+			min: Default::default(),
+			max: Default::default(),
 			idx: 0,
 		}
 	}
@@ -131,7 +155,8 @@ impl<T: Copy + Ord> History<T> {
 	}
 }
 
-impl<T: Arithmetic + num_traits::AsPrimitive<f32> + Ord> History<T> {
+// For any type that can be converted to f32, we can draw it
+impl<T: num_traits::AsPrimitive<f32> + Ord> History<T> {
 	// TODO: Make this return a response
 	fn draw(&self, ui: &mut Ui, stroke: egui::Stroke) {
 		let size = Rect::from_min_size(Pos2::new(0.0, 0.0), Vec2::new(500.0, 200.0)).translate(ui.cursor().min.to_vec2());
@@ -158,6 +183,10 @@ struct MyApp {
 }
 
 impl MyApp {
+	/// Starts the thread for the monitoring and sets up all the histories
+	///
+	/// Not labelled as default because it spawns processes and does stuff
+	/// which doesn't really feel like what you would expect from a default function
 	fn new() -> Self {
 		let (tx, rx) = mpsc::channel();
 		thread::spawn(move || {
@@ -169,6 +198,9 @@ impl MyApp {
 			used_mem: Default::default(),
 			avail_mem: Default::default(),
 		};
+
+		obj.used_mem.name = "Used Memory";
+		obj.avail_mem.name = "Available Memory";
 
 		if let Some(max) = get_max_memory() {
 			obj.used_mem.max = max;
