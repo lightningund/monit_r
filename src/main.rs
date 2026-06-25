@@ -127,7 +127,7 @@ fn get_cpu_usage() -> Option<f32> {
 
 	// Run `head` on /proc/stat
 	if let Some(parts) = run_cmd("head", &["--lines", "1", "/proc/stat"]) {
-		// let total = parts.iter().filter_map(|s| s.parse::<usize>().ok()).reduce(usize::add).expect("No Numbers?");
+		// Parse out the different stats overall
 		let user: usize = parts[1].parse().expect("Not a number?");
 		let nice: usize = parts[2].parse().expect("Not a number?");
 		let system: usize = parts[3].parse().expect("Not a number?");
@@ -135,16 +135,16 @@ fn get_cpu_usage() -> Option<f32> {
 
 		let curr_count = CpuCounts { user, nice, system, idle };
 
+		// Get the difference from the previous state
 		let counts = CPU_STATE.read().ok()?;
-		println!("Got read access! Reading: {:?}", *counts);
 		let diff = curr_count - *counts;
-		println!("Difference: {:?}", diff);
 		drop(counts);
 
-		let mut state = CPU_STATE.write().expect("Wasn't able to lock the writer");
-		println!("Got write access! Writing: {:?}", curr_count);
+		// Update the current state
+		let mut state = CPU_STATE.write().ok()?;
 		*state = curr_count;
 
+		// Calculate the percentage of time idle
 		let total = diff.total();
 		let idle_p = (diff.idle as f32) / (total as f32);
 		return Some((1.0 - idle_p) * 100.0);
@@ -228,7 +228,7 @@ impl<T> History<T> {
 
 impl<T: Copy> History<T> {
 	fn iter(&self) -> impl Iterator<Item = &T> {
-		self.hist.iter().rev().cycle().skip(MAX_HIST - self.idx).take(MAX_HIST)
+		self.hist.iter().rev().cycle().skip(MAX_HIST - self.idx - 1).take(MAX_HIST)
 	}
 }
 
@@ -256,13 +256,24 @@ impl<T: std::fmt::Debug + num_traits::AsPrimitive<f32>> History<T> {
 	// TODO: Make this return a response
 	fn draw(&self, ui: &mut Ui, stroke: egui::Stroke) {
 		ui.label(format!("{}: {:?}", self.name, self.top()));
-		let size = Rect::from_min_size(Pos2::new(0.0, 0.0), Vec2::new(500.0, 200.0)).translate(ui.cursor().min.to_vec2());
+		let mut size = ui.cursor();
+		size.set_height(200.0);
 		let painter = ui.painter_at(size);
-		ui.advance_cursor_after_rect(painter.clip_rect());
+		ui.advance_cursor_after_rect(size);
 
-		painter.rect_stroke(painter.clip_rect(), 0, stroke, egui::StrokeKind::Inside);
+		painter.rect_stroke(size, 0, stroke, egui::StrokeKind::Inside);
 
-		let Rect{ min: Pos2{x: ax, y: ay}, max: Pos2{x: bx, y: by} } = painter.clip_rect();
+		let Rect{ min: Pos2{x: ax, y: ay}, max: Pos2{x: bx, y: by} } = size;
+
+		let grid_stroke = egui::Stroke::new(1.0, Color32::from_white_alpha(50));
+
+		for i in 1..10 {
+			let y = map(i, 0, 10, ay, by);
+			painter.line_segment([
+				Pos2 { x: ax, y },
+				Pos2 { x: bx, y }
+			], grid_stroke);
+		}
 
 		painter.line(self.iter().enumerate().map(|(idx, v)| {
 			let scaled_x: f32 = map(idx, 0, MAX_HIST, bx, ax);
@@ -332,7 +343,7 @@ impl eframe::App for MyApp {
 		if let Ok(resp) = self.rx.try_recv() {
 			if let Some(mem) = resp.memory {
 				self.used_mem.add(mem.0);
-				self.avail_mem.add(mem.1);
+				self.avail_mem.add(self.used_mem.max - mem.1);
 			}
 
 			if let Some(cpu) = resp.cpu_usage {
