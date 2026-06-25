@@ -2,7 +2,7 @@
 
 TODO:
 - Shading
-- Grid lines
+- ~~Grid lines~~
 - Hover stats
 - GPU stats
 - Power stats

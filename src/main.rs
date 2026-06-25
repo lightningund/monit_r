@@ -32,10 +32,12 @@ impl<T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output 
 
 fn map<T, U>(val: T, a_min: T, a_max: T, b_min: U, b_max: U) -> U
 where
-	T: Copy + num_traits::AsPrimitive<U>,
-	U: Arithmetic + 'static
+	T: num_traits::AsPrimitive<f32>,
+	U: num_traits::AsPrimitive<f32>,
+	f32: num_traits::AsPrimitive<U>
 {
-	((val.as_() - a_min.as_()) / (a_max.as_() - a_min.as_())) * (b_max - b_min) + b_min
+	use num_traits::AsPrimitive;
+	(((val.as_() - a_min.as_()) / (a_max.as_() - a_min.as_())) * (b_max.as_() - b_min.as_()) + b_min.as_()).as_()
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -359,6 +361,13 @@ impl eframe::App for MyApp {
 		self.avail_mem.draw(ui, egui::Stroke::new(1.0, Color32::RED));
 		self.cpu_usage.draw(ui, egui::Stroke::new(1.0, Color32::GREEN));
 
+		if let Some(pos) = ui.pointer_hover_pos() {
+			let idx = map(pos.x, ui.available_width(), 0.0, 0, MAX_HIST);
+			// println!("{} -> {}", pos.x, idx);
+			ui.label(format!("{}", self.used_mem.iter().skip(idx).next().unwrap()));
+		}
+
+		// Make sure it draws again
 		ui.request_repaint_after(UPDATE_TIME);
 	}
 }
