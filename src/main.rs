@@ -269,6 +269,9 @@ impl<T: std::fmt::Debug + num_traits::AsPrimitive<f32>> History<T> {
 
 		let grid_stroke = egui::Stroke::new(1.0, Color32::from_white_alpha(50));
 
+		let hover_idx = ui.pointer_hover_pos().map(|pos| map(pos.x, ui.available_width(), 0.0, 0, MAX_HIST));
+
+		// Gridlines
 		for i in 1..10 {
 			let y = map(i, 0, 10, ay, by);
 			painter.line_segment([
@@ -277,9 +280,26 @@ impl<T: std::fmt::Debug + num_traits::AsPrimitive<f32>> History<T> {
 			], grid_stroke);
 		}
 
+		// Actual history
 		painter.line(self.iter().enumerate().map(|(idx, v)| {
 			let scaled_x: f32 = map(idx, 0, MAX_HIST, bx, ax);
 			let scaled_y: f32 = map(*v, self.min, self.max, by, ay);
+
+			// Hover info
+			if Some(idx) == hover_idx {
+				ui.place(
+					size.with_min_x(scaled_x).with_max_x(scaled_x),
+					egui::Label::new(format!("{:?}", *v))
+						.extend()
+						.halign(egui::Align::Min)
+				);
+
+				painter.line_segment([
+					Pos2 { x: scaled_x, y: ay },
+					Pos2 { x: scaled_x, y: by }
+				], grid_stroke);
+			}
+
 			Pos2::new(scaled_x, scaled_y)
 		}).collect(), stroke);
 	}
@@ -360,12 +380,6 @@ impl eframe::App for MyApp {
 		self.used_mem.draw(ui, egui::Stroke::new(1.0, Color32::WHITE));
 		self.avail_mem.draw(ui, egui::Stroke::new(1.0, Color32::RED));
 		self.cpu_usage.draw(ui, egui::Stroke::new(1.0, Color32::GREEN));
-
-		if let Some(pos) = ui.pointer_hover_pos() {
-			let idx = map(pos.x, ui.available_width(), 0.0, 0, MAX_HIST);
-			// println!("{} -> {}", pos.x, idx);
-			ui.label(format!("{}", self.used_mem.iter().skip(idx).next().unwrap()));
-		}
 
 		// Make sure it draws again
 		ui.request_repaint_after(UPDATE_TIME);

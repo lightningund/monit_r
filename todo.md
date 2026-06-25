@@ -3,7 +3,7 @@
 TODO:
 - Shading
 - ~~Grid lines~~
-- Hover stats
+- ~~Hover stats~~
 - GPU stats
 - Power stats
 - Temperature stats
