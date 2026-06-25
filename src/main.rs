@@ -3,12 +3,12 @@ use std::ops::{Sub, Add, Mul, Div};
 use std::process::{ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 use std::thread;
-use std::sync::{mpsc};
+use std::sync::{mpsc, RwLock};
 
 use eframe::egui;
 use egui::{Ui, Color32, Pos2, Vec2, Rect};
 
-static MAX_HIST: usize = 100;
+static MAX_HIST: usize = 500;
 static UPDATE_TIME: Duration = Duration::from_millis(200);
 
 fn main() -> eframe::Result {
@@ -79,7 +79,42 @@ fn get_memory() -> Option<(usize, usize)> {
 	None
 }
 
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+struct CpuCounts {
+	user: usize,
+	nice: usize,
+	system: usize,
+	idle: usize,
+}
+
+impl std::ops::Sub for CpuCounts {
+	type Output = Self;
+
+	fn sub(self, rhs: Self) -> Self::Output {
+		Self {
+			user: self.user - rhs.user,
+			nice: self.nice - rhs.nice,
+			system: self.system - rhs.system,
+			idle: self.idle - rhs.idle,
+		}
+	}
+}
+
+impl CpuCounts {
+	fn total(&self) -> usize {
+		self.user + self.nice + self.system + self.idle
+	}
+}
+
+static CPU_STATE: RwLock<CpuCounts> = RwLock::new(CpuCounts {
+	user: 0,
+	nice: 0,
+	system: 0,
+	idle: 0,
+});
+
 fn get_cpu_usage() -> Option<f32> {
+	// Run `iostat`
 	// if let Some(parts) = run_cmd("iostat", &["-c", "-y"]) {
 	// 	// Base it off of the position of the "%idle" header
 	// 	if let Some(idx) = parts.iter().position(|itm| *itm == "%idle") {
@@ -90,42 +125,44 @@ fn get_cpu_usage() -> Option<f32> {
 	// 	}
 	// }
 
+	// Run `head` on /proc/stat
 	if let Some(parts) = run_cmd("head", &["--lines", "1", "/proc/stat"]) {
-		let total = parts.iter().filter_map(|s| s.parse::<usize>().ok()).reduce(usize::add).expect("No Numbers?");
+		// let total = parts.iter().filter_map(|s| s.parse::<usize>().ok()).reduce(usize::add).expect("No Numbers?");
+		let user: usize = parts[1].parse().expect("Not a number?");
+		let nice: usize = parts[2].parse().expect("Not a number?");
+		let system: usize = parts[3].parse().expect("Not a number?");
 		let idle: usize = parts[4].parse().expect("Not a number?");
-		let idle_p = (idle as f32) / (total as f32);
-		// println!("total cycles: {}, Idle cycles: {}, Idle %: {}, {:?}", total, idle, idle_p, parts);
+
+		let curr_count = CpuCounts { user, nice, system, idle };
+
+		let counts = CPU_STATE.read().ok()?;
+		println!("Got read access! Reading: {:?}", *counts);
+		let diff = curr_count - *counts;
+		println!("Difference: {:?}", diff);
+		drop(counts);
+
+		let mut state = CPU_STATE.write().expect("Wasn't able to lock the writer");
+		println!("Got write access! Writing: {:?}", curr_count);
+		*state = curr_count;
+
+		let total = diff.total();
+		let idle_p = (diff.idle as f32) / (total as f32);
 		return Some((1.0 - idle_p) * 100.0);
 	}
+
+	// Read /proc/stat directly
+	// let procfile = std::fs::File::open("/proc/stat").expect("Couldn't open file");
+	// let reader = BufReader::new(procfile);
+	// for line in reader.lines().take(1) {
+	// 	if let Ok(line) = line {
+	// 		println!("{}", line);
+	// 	}
+	// }
 
 	None
 }
 
-fn updater(tx: mpsc::Sender<Stats>) {
-	let mut next_update = Instant::now();
-
-	let procfile = std::fs::File::open("/proc/stat").expect("Couldn't open file");
-
-	loop {
-		let now = Instant::now();
-		if now > next_update {
-			next_update = now + UPDATE_TIME;
-
-			let reader = BufReader::new(procfile.try_clone().expect("Couldn't clone file handle"));
-			for line in reader.lines().take(1) {
-				if let Ok(line) = line {
-					println!("{}", line);
-				}
-			}
-
-			let _ = tx.send(Stats {
-				memory: get_memory(),
-				cpu_usage: get_cpu_usage(),
-			});
-		}
-	}
-}
-
+// Continuously read from an ongoing command in a separate thread
 fn cpu_updater(tx: mpsc::Sender<f32>, stdout: ChildStdout) {
 	let reader = BufReader::new(stdout);
 
@@ -142,6 +179,22 @@ fn cpu_updater(tx: mpsc::Sender<f32>, stdout: ChildStdout) {
 			Err(err) => {
 				eprintln!("read error: {}", err);
 			}
+		}
+	}
+}
+
+fn updater(tx: mpsc::Sender<Stats>) {
+	let mut next_update = Instant::now();
+
+	loop {
+		let now = Instant::now();
+		if now > next_update {
+			next_update = now + UPDATE_TIME;
+
+			let _ = tx.send(Stats {
+				memory: get_memory(),
+				cpu_usage: get_cpu_usage(),
+			});
 		}
 	}
 }
