@@ -1,5 +1,6 @@
+use std::io::{BufRead, BufReader};
 use std::ops::{Sub, Add, Mul, Div};
-use std::process::{Command, Stdio};
+use std::process::{ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
 use std::thread;
 use std::sync::{mpsc};
@@ -11,11 +12,6 @@ static MAX_HIST: usize = 100;
 static UPDATE_TIME: Duration = Duration::from_millis(200);
 
 fn main() -> eframe::Result {
-	println!("Hello World!");
-
-	println!("{:?}", [0, 1, 2, 3, 4, 5, 6].into_iter().rev().cycle().take(7).enumerate().collect::<Vec<(usize, i32)>>());
-	println!("{:?}", [0, 1, 2, 3, 4, 5, 6].into_iter().rev().cycle().skip(7-2).take(7).enumerate().collect::<Vec<(usize, i32)>>());
-
 	let options = eframe::NativeOptions {
 		viewport: egui::ViewportBuilder::default()
 			.with_inner_size([500.0, 1000.0])
@@ -84,14 +80,22 @@ fn get_memory() -> Option<(usize, usize)> {
 }
 
 fn get_cpu_usage() -> Option<f32> {
-	if let Some(parts) = run_cmd("iostat", &["-c", "-y"]) {
-		// Base it off of the position of the "%idle" header
-		if let Some(idx) = parts.iter().position(|itm| *itm == "%idle") {
-			if let Ok(idle) = (&parts[idx + 6]).parse::<f32>() {
-				// println!("idle: {}", idle);
-				return Some(100.0 - idle);
-			}
-		}
+	// if let Some(parts) = run_cmd("iostat", &["-c", "-y"]) {
+	// 	// Base it off of the position of the "%idle" header
+	// 	if let Some(idx) = parts.iter().position(|itm| *itm == "%idle") {
+	// 		if let Ok(idle) = (&parts[idx + 6]).parse::<f32>() {
+	// 			// println!("idle: {}", idle);
+	// 			return Some(100.0 - idle);
+	// 		}
+	// 	}
+	// }
+
+	if let Some(parts) = run_cmd("head", &["--lines", "1", "/proc/stat"]) {
+		let total = parts.iter().filter_map(|s| s.parse::<usize>().ok()).reduce(usize::add).expect("No Numbers?");
+		let idle: usize = parts[4].parse().expect("Not a number?");
+		let idle_p = (idle as f32) / (total as f32);
+		// println!("total cycles: {}, Idle cycles: {}, Idle %: {}, {:?}", total, idle, idle_p, parts);
+		return Some((1.0 - idle_p) * 100.0);
 	}
 
 	None
@@ -100,15 +104,44 @@ fn get_cpu_usage() -> Option<f32> {
 fn updater(tx: mpsc::Sender<Stats>) {
 	let mut next_update = Instant::now();
 
+	let procfile = std::fs::File::open("/proc/stat").expect("Couldn't open file");
+
 	loop {
 		let now = Instant::now();
 		if now > next_update {
 			next_update = now + UPDATE_TIME;
 
+			let reader = BufReader::new(procfile.try_clone().expect("Couldn't clone file handle"));
+			for line in reader.lines().take(1) {
+				if let Ok(line) = line {
+					println!("{}", line);
+				}
+			}
+
 			let _ = tx.send(Stats {
 				memory: get_memory(),
 				cpu_usage: get_cpu_usage(),
 			});
+		}
+	}
+}
+
+fn cpu_updater(tx: mpsc::Sender<f32>, stdout: ChildStdout) {
+	let reader = BufReader::new(stdout);
+
+	for line in reader.lines() {
+		match line {
+			Ok(line) => {
+				if let Some(last) = split(&line).last() {
+					if let Ok(idle) = last.parse::<f32>() {
+						let _ = tx.send(100.0 - idle);
+					}
+				}
+				println!("mpstat: {}", line);
+			}
+			Err(err) => {
+				eprintln!("read error: {}", err);
+			}
 		}
 	}
 }
@@ -189,6 +222,7 @@ impl<T: std::fmt::Debug + num_traits::AsPrimitive<f32>> History<T> {
 #[derive(Debug)]
 struct MyApp {
 	rx: mpsc::Receiver<Stats>,
+	// cpu_rx: mpsc::Receiver<f32>,
 	used_mem: History<usize>,
 	avail_mem: History<usize>,
 	cpu_usage: History<f32>,
@@ -205,8 +239,20 @@ impl MyApp {
 			updater(tx);
 		});
 
+		// let (btx, brx) = mpsc::channel();
+		// thread::spawn(move || {
+		// 	let proc = Command::new("mpstat")
+		// 		.arg("1")
+		// 		.stdout(Stdio::piped())
+		// 		.spawn().expect("Couldn't create thread")
+		// 		.stdout.expect("Couldn't get stdout");
+
+		// 	cpu_updater(btx, proc);
+		// });
+
 		let mut obj = Self {
 			rx,
+			// cpu_rx: brx,
 			used_mem: Default::default(),
 			avail_mem: Default::default(),
 			cpu_usage: Default::default(),
@@ -240,6 +286,10 @@ impl eframe::App for MyApp {
 				self.cpu_usage.add_unbounded(cpu);
 			}
 		}
+
+		// if let Ok(cpu) = self.cpu_rx.try_recv() {
+		// 	self.cpu_usage.add_unbounded(cpu);
+		// }
 
 		self.used_mem.draw(ui, egui::Stroke::new(1.0, Color32::WHITE));
 		self.avail_mem.draw(ui, egui::Stroke::new(1.0, Color32::RED));
