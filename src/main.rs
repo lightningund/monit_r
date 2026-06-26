@@ -42,7 +42,7 @@ where
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Stats {
-	memory: Option<(usize, usize)>, // Used and available
+	memory: Option<usize>, // Used and available
 	cpu_usage: Option<f32>,
 }
 
@@ -69,13 +69,10 @@ fn get_max_memory() -> Option<usize> {
 	None
 }
 
-fn get_memory() -> Option<(usize, usize)> {
+fn get_memory() -> Option<usize> {
 	if let Some(parts) = run_cmd("free", &["-w"]) {
 		let used = parts[9].parse();
-		let avail = parts[14].parse();
-		if let (Ok(used), Ok(avail)) = (used, avail) {
-			return Some((used, avail));
-		}
+		return used.ok();
 	}
 
 	None
@@ -310,7 +307,6 @@ struct MyApp {
 	rx: mpsc::Receiver<Stats>,
 	// cpu_rx: mpsc::Receiver<f32>,
 	used_mem: History<usize>,
-	avail_mem: History<usize>,
 	cpu_usage: History<f32>,
 }
 
@@ -340,17 +336,14 @@ impl MyApp {
 			rx,
 			// cpu_rx: brx,
 			used_mem: Default::default(),
-			avail_mem: Default::default(),
 			cpu_usage: Default::default(),
 		};
 
 		obj.used_mem.name = "Used Memory";
-		obj.avail_mem.name = "Available Memory";
 		obj.cpu_usage.name = "CPU Usage";
 
 		if let Some(max) = get_max_memory() {
 			obj.used_mem.max = max;
-			obj.avail_mem.max = max;
 		}
 
 		obj.cpu_usage.max = 100.0;
@@ -364,8 +357,7 @@ impl eframe::App for MyApp {
 	fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
 		if let Ok(resp) = self.rx.try_recv() {
 			if let Some(mem) = resp.memory {
-				self.used_mem.add(mem.0);
-				self.avail_mem.add(self.used_mem.max - mem.1);
+				self.used_mem.add(mem);
 			}
 
 			if let Some(cpu) = resp.cpu_usage {
@@ -378,7 +370,6 @@ impl eframe::App for MyApp {
 		// }
 
 		self.used_mem.draw(ui, egui::Stroke::new(1.0, Color32::WHITE));
-		self.avail_mem.draw(ui, egui::Stroke::new(1.0, Color32::RED));
 		self.cpu_usage.draw(ui, egui::Stroke::new(1.0, Color32::GREEN));
 
 		// Make sure it draws again
