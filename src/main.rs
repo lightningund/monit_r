@@ -1,12 +1,11 @@
 use std::io::{BufRead, BufReader};
 use std::ops::{Sub, Add, Mul, Div};
-use std::process::{ChildStdout, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-use std::thread;
-use std::sync::{mpsc, RwLock};
+use std::sync::{RwLock};
 
 use eframe::egui;
-use egui::{Ui, Color32, Pos2, Vec2, Rect};
+use egui::{Ui, Color32, Pos2, Rect};
 
 static MAX_HIST: usize = 500;
 static UPDATE_TIME: Duration = Duration::from_millis(200);
@@ -40,11 +39,6 @@ where
 	(((val.as_() - a_min.as_()) / (a_max.as_() - a_min.as_())) * (b_max.as_() - b_min.as_()) + b_min.as_()).as_()
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct Stats {
-	memory: Option<usize>, // Used and available
-	cpu_usage: Option<f32>,
-}
 
 fn split(src: &str) -> impl Iterator<Item = &str> {
 	src.split(&[' ', '\t', '\n', '\r']).filter(|s| !s.is_empty())
@@ -113,41 +107,8 @@ static CPU_STATE: RwLock<CpuCounts> = RwLock::new(CpuCounts {
 });
 
 fn get_cpu_usage() -> Option<f32> {
-	// Run `iostat`
-	// if let Some(parts) = run_cmd("iostat", &["-c", "-y"]) {
-	// 	// Base it off of the position of the "%idle" header
-	// 	if let Some(idx) = parts.iter().position(|itm| *itm == "%idle") {
-	// 		if let Ok(idle) = (&parts[idx + 6]).parse::<f32>() {
-	// 			// println!("idle: {}", idle);
-	// 			return Some(100.0 - idle);
-	// 		}
-	// 	}
-	// }
-
 	// Run `head` on /proc/stat
-	if let Some(parts) = run_cmd("head", &["--lines", "1", "/proc/stat"]) {
-		// Parse out the different stats overall
-		let user: usize = parts[1].parse().expect("Not a number?");
-		let nice: usize = parts[2].parse().expect("Not a number?");
-		let system: usize = parts[3].parse().expect("Not a number?");
-		let idle: usize = parts[4].parse().expect("Not a number?");
-
-		let curr_count = CpuCounts { user, nice, system, idle };
-
-		// Get the difference from the previous state
-		let counts = CPU_STATE.read().ok()?;
-		let diff = curr_count - *counts;
-		drop(counts);
-
-		// Update the current state
-		let mut state = CPU_STATE.write().ok()?;
-		*state = curr_count;
-
-		// Calculate the percentage of time idle
-		let total = diff.total();
-		let idle_p = (diff.idle as f32) / (total as f32);
-		return Some((1.0 - idle_p) * 100.0);
-	}
+	let parts = run_cmd("head", &["--lines", "1", "/proc/stat"])?;
 
 	// Read /proc/stat directly
 	// let procfile = std::fs::File::open("/proc/stat").expect("Couldn't open file");
@@ -158,44 +119,27 @@ fn get_cpu_usage() -> Option<f32> {
 	// 	}
 	// }
 
-	None
-}
+	// Parse out the different stats overall
+	let user: usize = parts[1].parse().expect("Not a number?");
+	let nice: usize = parts[2].parse().expect("Not a number?");
+	let system: usize = parts[3].parse().expect("Not a number?");
+	let idle: usize = parts[4].parse().expect("Not a number?");
 
-// Continuously read from an ongoing command in a separate thread
-fn cpu_updater(tx: mpsc::Sender<f32>, stdout: ChildStdout) {
-	let reader = BufReader::new(stdout);
+	let curr_count = CpuCounts { user, nice, system, idle };
 
-	for line in reader.lines() {
-		match line {
-			Ok(line) => {
-				if let Some(last) = split(&line).last() {
-					if let Ok(idle) = last.parse::<f32>() {
-						let _ = tx.send(100.0 - idle);
-					}
-				}
-				println!("mpstat: {}", line);
-			}
-			Err(err) => {
-				eprintln!("read error: {}", err);
-			}
-		}
-	}
-}
+	// Get the difference from the previous state
+	let counts = CPU_STATE.read().ok()?;
+	let diff = curr_count - *counts;
+	drop(counts);
 
-fn updater(tx: mpsc::Sender<Stats>) {
-	let mut next_update = Instant::now();
+	// Update the current state
+	let mut state = CPU_STATE.write().ok()?;
+	*state = curr_count;
 
-	loop {
-		let now = Instant::now();
-		if now > next_update {
-			next_update = now + UPDATE_TIME;
-
-			let _ = tx.send(Stats {
-				memory: get_memory(),
-				cpu_usage: get_cpu_usage(),
-			});
-		}
-	}
+	// Calculate the percentage of time idle
+	let total = diff.total();
+	let idle_p = (diff.idle as f32) / (total as f32);
+	Some((1.0 - idle_p) * 100.0)
 }
 
 #[derive(Clone, Debug)]
@@ -305,8 +249,6 @@ impl<T: std::fmt::Debug + num_traits::AsPrimitive<f32>> History<T> {
 #[derive(Debug)]
 struct MyApp {
 	next_update: Instant,
-	// rx: mpsc::Receiver<Stats>,
-	// cpu_rx: mpsc::Receiver<f32>,
 	used_mem: History<usize>,
 	cpu_usage: History<f32>,
 }
@@ -317,26 +259,8 @@ impl MyApp {
 	/// Not labelled as default because it spawns processes and does stuff
 	/// which doesn't really feel like what you would expect from a default function
 	fn new() -> Self {
-		// let (tx, rx) = mpsc::channel();
-		// thread::spawn(move || {
-		// 	updater(tx);
-		// });
-
-		// let (btx, brx) = mpsc::channel();
-		// thread::spawn(move || {
-		// 	let proc = Command::new("mpstat")
-		// 		.arg("1")
-		// 		.stdout(Stdio::piped())
-		// 		.spawn().expect("Couldn't create thread")
-		// 		.stdout.expect("Couldn't get stdout");
-
-		// 	cpu_updater(btx, proc);
-		// });
-
 		let mut obj = Self {
 			next_update: Instant::now(),
-			// rx,
-			// cpu_rx: brx,
 			used_mem: Default::default(),
 			cpu_usage: Default::default(),
 		};
@@ -357,16 +281,6 @@ impl MyApp {
 impl eframe::App for MyApp {
 	// This is called every time the screen updates
 	fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
-		// if let Ok(resp) = self.rx.try_recv() {
-		// 	if let Some(mem) = resp.memory {
-		// 		self.used_mem.add(mem);
-		// 	}
-
-		// 	if let Some(cpu) = resp.cpu_usage {
-		// 		self.cpu_usage.add_unbounded(cpu);
-		// 	}
-		// }
-
 		let now = Instant::now();
 		if now > self.next_update {
 			self.next_update = now + UPDATE_TIME;
@@ -378,10 +292,6 @@ impl eframe::App for MyApp {
 				self.cpu_usage.add_unbounded(cpu);
 			}
 		}
-
-		// if let Ok(cpu) = self.cpu_rx.try_recv() {
-		// 	self.cpu_usage.add_unbounded(cpu);
-		// }
 
 		self.used_mem.draw(ui, egui::Stroke::new(1.0, Color32::WHITE));
 		self.cpu_usage.draw(ui, egui::Stroke::new(1.0, Color32::GREEN));
