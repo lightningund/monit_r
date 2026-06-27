@@ -1,4 +1,3 @@
-use std::ops::{Sub, Add, Mul, Div};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use std::thread;
@@ -25,9 +24,6 @@ fn main() -> eframe::Result {
 		}),
 	)
 }
-
-trait Arithmetic: Copy + Add<Output = Self> + Sub<Output = Self> + Mul<Output = Self> + Div<Output = Self> {}
-impl<T: Copy + Add<Output = T> + Sub<Output = T> + Mul<Output = T> + Div<Output = T>> Arithmetic for T {}
 
 fn map<T, U>(val: T, a_min: T, a_max: T, b_min: U, b_max: U) -> U
 where
