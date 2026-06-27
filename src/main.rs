@@ -2,14 +2,15 @@ use std::io::{BufRead, BufReader};
 use std::ops::{Sub, Add, Mul, Div};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-use std::sync::{RwLock};
+use std::thread;
+use std::sync::{mpsc, RwLock};
 
 use eframe::egui;
 use egui::{Ui, Color32, Pos2, Rect};
 
 static MAX_HIST: usize = 500;
 static UPDATE_TIME: Duration = Duration::from_millis(200);
-static SCREEN_UPDATE: Duration = Duration::from_millis(1);
+static SCREEN_UPDATE: Duration = Duration::from_millis(10);
 
 fn main() -> eframe::Result {
 	let options = eframe::NativeOptions {
@@ -38,6 +39,12 @@ where
 {
 	use num_traits::AsPrimitive;
 	(((val.as_() - a_min.as_()) / (a_max.as_() - a_min.as_())) * (b_max.as_() - b_min.as_()) + b_min.as_()).as_()
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Stats {
+	memory: Option<usize>, // Used and available
+	cpu_usage: Option<f32>,
 }
 
 fn split(src: &str) -> impl Iterator<Item = &str> {
@@ -140,6 +147,17 @@ fn get_cpu_usage() -> Option<f32> {
 	let total = diff.total();
 	let idle_p = (diff.idle as f32) / (total as f32);
 	Some((1.0 - idle_p) * 100.0)
+}
+
+fn updater(tx: mpsc::Sender<Stats>) {
+	loop {
+		let _ = tx.send(Stats {
+			memory: get_memory(),
+			cpu_usage: get_cpu_usage(),
+		});
+
+		thread::sleep(UPDATE_TIME);
+	}
 }
 
 #[derive(Clone, Debug)]
@@ -250,7 +268,8 @@ impl<T: ToString + num_traits::AsPrimitive<f32>> History<T> {
 
 #[derive(Debug)]
 struct MyApp {
-	next_update: Instant,
+	rx: mpsc::Receiver<Stats>,
+	// next_update: Instant,
 	used_mem: History<usize>,
 	cpu_usage: History<f32>,
 }
@@ -261,8 +280,14 @@ impl MyApp {
 	/// Not labelled as default because it spawns processes and does stuff
 	/// which doesn't really feel like what you would expect from a default function
 	fn new() -> Self {
+		let (tx, rx) = mpsc::channel();
+		thread::spawn(move || {
+			updater(tx);
+		});
+
 		let mut obj = Self {
-			next_update: Instant::now(),
+			rx,
+			// next_update: Instant::now(),
 			used_mem: Default::default(),
 			cpu_usage: Default::default(),
 		};
@@ -283,23 +308,33 @@ impl MyApp {
 impl eframe::App for MyApp {
 	// This is called every time the screen updates
 	fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
-		let now = Instant::now();
-		if now > self.next_update {
-			self.next_update = now + UPDATE_TIME;
-			if let Some(mem) = get_memory() {
+		if let Ok(resp) = self.rx.try_recv() {
+			if let Some(mem) = resp.memory {
 				self.used_mem.add(mem);
 			}
 
-			if let Some(cpu) = get_cpu_usage() {
+			if let Some(cpu) = resp.cpu_usage {
 				self.cpu_usage.add_unbounded(cpu);
 			}
 		}
+
+		// let now = Instant::now();
+		// if now > self.next_update {
+		// 	self.next_update = now + UPDATE_TIME;
+		// 	if let Some(mem) = get_memory() {
+		// 		self.used_mem.add(mem);
+		// 	}
+
+		// 	if let Some(cpu) = get_cpu_usage() {
+		// 		self.cpu_usage.add_unbounded(cpu);
+		// 	}
+		// }
 
 		self.used_mem.draw(ui, egui::Stroke::new(1.0, Color32::WHITE));
 		self.cpu_usage.draw(ui, egui::Stroke::new(1.0, Color32::GREEN));
 
 		// Make sure it draws again
-		// ui.request_repaint_after(SCREEN_UPDATE);
-		ui.request_repaint();
+		ui.request_repaint_after(SCREEN_UPDATE);
+		// ui.request_repaint();
 	}
 }
