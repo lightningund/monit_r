@@ -210,14 +210,7 @@ impl CpuCounts {
 	}
 }
 
-static CPU_STATE: RwLock<CpuCounts> = RwLock::new(CpuCounts {
-	user: 0,
-	nice: 0,
-	system: 0,
-	idle: 0,
-});
-
-fn get_cpu_usage() -> Option<f32> {
+fn get_cpu_usage(cpu_state: &mut CpuCounts) -> Option<f32> {
 	// Run `head` on /proc/stat
 	let parts = run_cmd("head", &["--lines", "1", "/proc/stat"])?;
 
@@ -230,13 +223,10 @@ fn get_cpu_usage() -> Option<f32> {
 	let curr_count = CpuCounts { user, nice, system, idle };
 
 	// Get the difference from the previous state
-	let counts = CPU_STATE.read().ok()?;
-	let diff = curr_count - *counts;
-	drop(counts);
+	let diff = curr_count - *cpu_state;
 
 	// Update the current state
-	let mut state = CPU_STATE.write().ok()?;
-	*state = curr_count;
+	*cpu_state = curr_count;
 
 	// Calculate the percentage of time idle
 	let total = diff.total();
@@ -245,13 +235,15 @@ fn get_cpu_usage() -> Option<f32> {
 }
 
 fn updater(stats: Arc<RwLock<Stats>>) {
+	let mut cpu_state = CpuCounts::default();
+
 	loop {
 		if let Ok(mut stats) = stats.write() {
 			if let Some(mem) = get_memory() {
 				stats.used_mem.add(mem);
 			}
 
-			if let Some(cpu) = get_cpu_usage() {
+			if let Some(cpu) = get_cpu_usage(&mut cpu_state) {
 				stats.cpu_usage.add(cpu);
 			}
 		}
