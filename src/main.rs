@@ -1,3 +1,4 @@
+use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use std::thread;
@@ -245,6 +246,32 @@ fn updater(stats: Arc<RwLock<Stats>>) {
 		}
 
 		thread::sleep(UPDATE_TIME);
+	}
+}
+
+fn cpu_updater(stats: Arc<RwLock<Stats>>) {
+	let stdout = Command::new("mpstat")
+		.arg("1")
+		.stdout(Stdio::piped())
+		.spawn().expect("Couldn't create thread")
+		.stdout.expect("Couldn't get stdout");
+
+	let reader = BufReader::new(stdout);
+
+	for line in reader.lines() {
+		match line {
+			Ok(line) => {
+				let idle = split(&line).last()
+					.and_then(|last| last.parse::<f32>().ok());
+
+				if let Some(idle) = idle && let Ok(mut stats) = stats.write() {
+					stats.cpu_usage.add(100.0 - idle);
+				}
+			}
+			Err(err) => {
+				eprintln!("read error: {}", err);
+			}
+		}
 	}
 }
 
