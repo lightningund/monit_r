@@ -1,16 +1,14 @@
-use std::io::{BufRead, BufReader};
 use std::ops::{Sub, Add, Mul, Div};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use std::thread;
-use std::sync::{mpsc, RwLock, Arc};
+use std::sync::{RwLock, Arc};
 
 use eframe::egui;
 use egui::{Ui, Color32, Pos2, Rect};
 
 static MAX_HIST: usize = 500;
 static UPDATE_TIME: Duration = Duration::from_millis(200);
-static SCREEN_UPDATE: Duration = Duration::from_millis(10);
 
 fn main() -> eframe::Result {
 	let options = eframe::NativeOptions {
@@ -223,15 +221,6 @@ fn get_cpu_usage() -> Option<f32> {
 	// Run `head` on /proc/stat
 	let parts = run_cmd("head", &["--lines", "1", "/proc/stat"])?;
 
-	// Read /proc/stat directly
-	// let procfile = std::fs::File::open("/proc/stat").expect("Couldn't open file");
-	// let reader = BufReader::new(procfile);
-	// for line in reader.lines().take(1) {
-	// 	if let Ok(line) = line {
-	// 		println!("{}", line);
-	// 	}
-	// }
-
 	// Parse out the different stats overall
 	let user: usize = parts[1].parse().expect("Not a number?");
 	let nice: usize = parts[2].parse().expect("Not a number?");
@@ -274,10 +263,6 @@ fn updater(stats: Arc<RwLock<Stats>>) {
 #[derive(Debug)]
 struct MyApp {
 	stats: Arc<RwLock<Stats>>,
-	// rx: mpsc::Receiver<Stats>,
-	// next_update: Instant,
-	// used_mem: History<usize>,
-	// cpu_usage: History<f32>,
 }
 
 impl MyApp {
@@ -314,28 +299,6 @@ impl MyApp {
 impl eframe::App for MyApp {
 	// This is called every time the screen updates
 	fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
-		// if let Ok(resp) = self.rx.try_recv() {
-		// 	if let Some(mem) = resp.memory {
-		// 		self.used_mem.add(mem);
-		// 	}
-
-		// 	if let Some(cpu) = resp.cpu_usage {
-		// 		self.cpu_usage.add_unbounded(cpu);
-		// 	}
-		// }
-
-		// let now = Instant::now();
-		// if now > self.next_update {
-		// 	self.next_update = now + UPDATE_TIME;
-		// 	if let Some(mem) = get_memory() {
-		// 		self.used_mem.add(mem);
-		// 	}
-
-		// 	if let Some(cpu) = get_cpu_usage() {
-		// 		self.cpu_usage.add_unbounded(cpu);
-		// 	}
-		// }
-
 		if let Ok(stats) = self.stats.read() {
 			stats.used_mem.draw(ui, egui::Stroke::new(1.0, Color32::WHITE));
 			stats.cpu_usage.draw(ui, egui::Stroke::new(1.0, Color32::GREEN));
@@ -343,7 +306,5 @@ impl eframe::App for MyApp {
 
 		// Make sure it draws again
 		ui.request_repaint_after(UPDATE_TIME);
-		// ui.request_repaint_after(SCREEN_UPDATE);
-		// ui.request_repaint();
 	}
 }
