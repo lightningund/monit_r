@@ -297,6 +297,6 @@ impl eframe::App for MyApp {
 		self.cpu_usage.draw(ui, egui::Stroke::new(1.0, Color32::GREEN));
 
 		// Make sure it draws again
-		ui.request_repaint_after(UPDATE_TIME.div_f32(2.0));
+		ui.request_repaint_after(UPDATE_TIME.div_f32(20.0));
 	}
 }
