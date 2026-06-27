@@ -304,7 +304,8 @@ impl<T: std::fmt::Debug + num_traits::AsPrimitive<f32>> History<T> {
 
 #[derive(Debug)]
 struct MyApp {
-	rx: mpsc::Receiver<Stats>,
+	next_update: Instant,
+	// rx: mpsc::Receiver<Stats>,
 	// cpu_rx: mpsc::Receiver<f32>,
 	used_mem: History<usize>,
 	cpu_usage: History<f32>,
@@ -316,10 +317,10 @@ impl MyApp {
 	/// Not labelled as default because it spawns processes and does stuff
 	/// which doesn't really feel like what you would expect from a default function
 	fn new() -> Self {
-		let (tx, rx) = mpsc::channel();
-		thread::spawn(move || {
-			updater(tx);
-		});
+		// let (tx, rx) = mpsc::channel();
+		// thread::spawn(move || {
+		// 	updater(tx);
+		// });
 
 		// let (btx, brx) = mpsc::channel();
 		// thread::spawn(move || {
@@ -333,7 +334,8 @@ impl MyApp {
 		// });
 
 		let mut obj = Self {
-			rx,
+			next_update: Instant::now(),
+			// rx,
 			// cpu_rx: brx,
 			used_mem: Default::default(),
 			cpu_usage: Default::default(),
@@ -355,12 +357,24 @@ impl MyApp {
 impl eframe::App for MyApp {
 	// This is called every time the screen updates
 	fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
-		if let Ok(resp) = self.rx.try_recv() {
-			if let Some(mem) = resp.memory {
+		// if let Ok(resp) = self.rx.try_recv() {
+		// 	if let Some(mem) = resp.memory {
+		// 		self.used_mem.add(mem);
+		// 	}
+
+		// 	if let Some(cpu) = resp.cpu_usage {
+		// 		self.cpu_usage.add_unbounded(cpu);
+		// 	}
+		// }
+
+		let now = Instant::now();
+		if now > self.next_update {
+			self.next_update = now + UPDATE_TIME;
+			if let Some(mem) = get_memory() {
 				self.used_mem.add(mem);
 			}
 
-			if let Some(cpu) = resp.cpu_usage {
+			if let Some(cpu) = get_cpu_usage() {
 				self.cpu_usage.add_unbounded(cpu);
 			}
 		}
@@ -373,6 +387,6 @@ impl eframe::App for MyApp {
 		self.cpu_usage.draw(ui, egui::Stroke::new(1.0, Color32::GREEN));
 
 		// Make sure it draws again
-		ui.request_repaint_after(UPDATE_TIME);
+		ui.request_repaint_after(UPDATE_TIME.div_f32(2.0));
 	}
 }
