@@ -9,6 +9,7 @@ use egui::{Ui, Color32, Pos2, Rect};
 
 static MAX_HIST: usize = 500;
 static UPDATE_TIME: Duration = Duration::from_millis(200);
+static SCREEN_UPDATE: Duration = Duration::from_millis(1);
 
 fn main() -> eframe::Result {
 	let options = eframe::NativeOptions {
@@ -38,7 +39,6 @@ where
 	use num_traits::AsPrimitive;
 	(((val.as_() - a_min.as_()) / (a_max.as_() - a_min.as_())) * (b_max.as_() - b_min.as_()) + b_min.as_()).as_()
 }
-
 
 fn split(src: &str) -> impl Iterator<Item = &str> {
 	src.split(&[' ', '\t', '\n', '\r']).filter(|s| !s.is_empty())
@@ -145,7 +145,7 @@ fn get_cpu_usage() -> Option<f32> {
 #[derive(Clone, Debug)]
 struct History<T> {
 	hist: [T; MAX_HIST],
-	name: &'static str, // Maybe could be a `String`
+	name: String,
 	min: T,
 	max: T,
 	idx: usize,
@@ -194,11 +194,11 @@ impl<T: Copy + Ord> History<T> {
 	}
 }
 
-// For any type that can be converted to f32, we can draw it
-impl<T: std::fmt::Debug + num_traits::AsPrimitive<f32>> History<T> {
+// For any type that can be converted to f32 and printed, we can draw it
+impl<T: ToString + num_traits::AsPrimitive<f32>> History<T> {
 	// TODO: Make this return a response
 	fn draw(&self, ui: &mut Ui, stroke: egui::Stroke) {
-		ui.label(format!("{}: {:?}", self.name, self.top()));
+		ui.label(self.name.clone() + &self.top().to_string());
 		let mut size = ui.cursor();
 		size.set_height(200.0);
 		let painter = ui.painter_at(size);
@@ -229,10 +229,12 @@ impl<T: std::fmt::Debug + num_traits::AsPrimitive<f32>> History<T> {
 			// Hover info
 			if Some(idx) == hover_idx {
 				ui.place(
-					size.with_min_x(scaled_x).with_max_x(scaled_x),
-					egui::Label::new(format!("{:?}", *v))
+					size
+						.with_min_x(scaled_x)
+						.with_max_x(scaled_x)
+						.with_max_y(size.min.y),
+					egui::Label::new(v.to_string())
 						.extend()
-						.halign(egui::Align::Min)
 				);
 
 				painter.line_segment([
@@ -265,8 +267,8 @@ impl MyApp {
 			cpu_usage: Default::default(),
 		};
 
-		obj.used_mem.name = "Used Memory";
-		obj.cpu_usage.name = "CPU Usage";
+		obj.used_mem.name = "Used Memory".to_string();
+		obj.cpu_usage.name = "CPU Usage".to_string();
 
 		if let Some(max) = get_max_memory() {
 			obj.used_mem.max = max;
@@ -297,6 +299,7 @@ impl eframe::App for MyApp {
 		self.cpu_usage.draw(ui, egui::Stroke::new(1.0, Color32::GREEN));
 
 		// Make sure it draws again
-		ui.request_repaint_after(UPDATE_TIME.div_f32(20.0));
+		// ui.request_repaint_after(SCREEN_UPDATE);
+		ui.request_repaint();
 	}
 }
