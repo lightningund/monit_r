@@ -40,54 +40,54 @@ where
 }
 
 #[derive(Clone, Debug)]
-struct History<T> {
-	hist: [T; MAX_HIST],
-	name: String,
-	min: T,
-	max: T,
+struct RingBuffer<T, const N: usize> {
+	hist: [T; N],
 	idx: usize,
 }
 
-impl<T: Default + Copy> Default for History<T> {
+impl<T: Default + Copy, const N: usize> Default for RingBuffer<T, N> {
 	fn default() -> Self {
 		Self {
-			hist: [T::default(); MAX_HIST],
-			name: Default::default(),
-			min: Default::default(),
-			max: Default::default(),
+			hist: [T::default(); N],
 			idx: 0,
 		}
 	}
 }
 
-impl<T> History<T> {
+impl<T, const N: usize> RingBuffer<T, N> {
 	fn top(&self) -> &T {
 		&self.hist[self.idx]
 	}
 }
 
-impl<T: Copy> History<T> {
+impl<T: Copy, const N: usize> RingBuffer<T, N> {
 	fn iter(&self) -> impl Iterator<Item = &T> {
-		self.hist.iter().rev().cycle().skip(MAX_HIST - self.idx - 1).take(MAX_HIST)
+		self.hist.iter().rev().cycle().skip(N - self.idx - 1).take(N)
 	}
-}
 
-impl<T: Copy> History<T> {
 	/// Adds an item without updating the minimum and maximum bounds
-	fn add_unbounded(&mut self, item: T) {
-		self.idx += 1;
-		self.idx %= MAX_HIST;
-		self.hist[self.idx] = item;
-	}
-}
-
-impl<T: Copy + Ord> History<T> {
 	fn add(&mut self, item: T) {
 		self.idx += 1;
 		self.idx %= MAX_HIST;
 		self.hist[self.idx] = item;
-		if item > self.max { self.max = item; }
-		if item < self.min { self.min = item; }
+	}
+}
+
+#[derive(Clone, Debug, Default)]
+struct History<T: Copy> {
+	hist: RingBuffer<T, MAX_HIST>,
+	name: String,
+	min: T,
+	max: T,
+}
+
+impl<T: Copy> History<T> {
+	fn iter(&self) -> impl Iterator<Item = &T> {
+		self.hist.iter()
+	}
+
+	fn add(&mut self, item: T) {
+		self.hist.add(item)
 	}
 }
 
@@ -95,7 +95,7 @@ impl<T: Copy + Ord> History<T> {
 impl<T: ToString + num_traits::AsPrimitive<f32>> History<T> {
 	// TODO: Make this return a response
 	fn draw(&self, ui: &mut Ui, stroke: egui::Stroke) {
-		ui.label(self.name.clone() + &self.top().to_string());
+		ui.label(self.name.clone() + " " + &self.hist.top().to_string());
 		let mut size = ui.cursor();
 		size.set_height(200.0);
 		let painter = ui.painter_at(size);
@@ -252,7 +252,7 @@ fn updater(stats: Arc<RwLock<Stats>>) {
 			}
 
 			if let Some(cpu) = get_cpu_usage() {
-				stats.cpu_usage.add_unbounded(cpu);
+				stats.cpu_usage.add(cpu);
 			}
 		}
 
