@@ -235,6 +235,8 @@ fn updater(stats: Arc<RwLock<Stats>>) {
 	let mut cpu_state = CpuCounts::default();
 
 	loop {
+		let next_update = Instant::now() + UPDATE_TIME;
+
 		if let Ok(mut stats) = stats.write() {
 			if let Some(mem) = get_memory() {
 				stats.used_mem.add(mem);
@@ -245,7 +247,7 @@ fn updater(stats: Arc<RwLock<Stats>>) {
 			}
 		}
 
-		thread::sleep(UPDATE_TIME);
+		thread::sleep(next_update - Instant::now());
 	}
 }
 
@@ -321,5 +323,6 @@ impl eframe::App for MyApp {
 
 		// Make sure it draws again
 		ui.request_repaint_after(UPDATE_TIME);
+		// ui.request_repaint();
 	}
 }
