@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 eframe = "0.34.3"
+image = "0.25.10"
 num-traits = "0.2.19"
 
 [profile.release]

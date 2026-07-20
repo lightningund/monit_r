@@ -13,6 +13,14 @@ static UPDATE_TIME: Duration = Duration::from_millis(200);
 fn main() -> eframe::Result {
 	let options = eframe::NativeOptions {
 		viewport: egui::ViewportBuilder::default()
+			.with_icon(std::sync::Arc::new(egui::IconData {
+				rgba: image::load_from_memory(include_bytes!("../icon.bmp"))
+					.unwrap()
+					.to_rgba8()
+					.to_vec(),
+				width: 32,
+				height: 32,
+			}))
 			.with_inner_size([500.0, 1000.0])
 			.with_drag_and_drop(true),
 		..Default::default()
@@ -55,14 +63,12 @@ impl<T, const N: usize> RingBuffer<T, N> {
 	fn top(&self) -> &T {
 		&self.hist[self.idx]
 	}
-}
 
-impl<T: Copy, const N: usize> RingBuffer<T, N> {
 	fn iter(&self) -> impl Iterator<Item = &T> {
 		self.hist.iter().rev().cycle().skip(N - self.idx - 1).take(N)
 	}
 
-	/// Adds an item without updating the minimum and maximum bounds
+	// Might need to restrict T to be Copy
 	fn add(&mut self, item: T) {
 		self.idx += 1;
 		self.idx %= MAX_HIST;
@@ -146,6 +152,7 @@ impl<T: ToString + num_traits::AsPrimitive<f32>> History<T> {
 struct Stats {
 	used_mem: History<usize>,
 	cpu_usage: History<f32>,
+	cpu_temp: History<f32>,
 }
 
 fn split(src: &str) -> impl Iterator<Item = &str> {
@@ -163,21 +170,25 @@ fn run_cmd(cmd: &str, args: &[&str]) -> Option<Vec<String>> {
 }
 
 fn get_max_memory() -> Option<usize> {
-	if let Some(parts) = run_cmd("free", &["-w"]) {
-		let max = parts[8].parse();
-		return max.ok();
-	}
+	run_cmd("free", &["-w"])
+		.and_then(|parts| parts[8].parse().ok())
+	// if let Some(parts) = run_cmd("free", &["-w"]) {
+	// 	let max = parts[8].parse();
+	// 	return max.ok();
+	// }
 
-	None
+	// None
 }
 
 fn get_memory() -> Option<usize> {
-	if let Some(parts) = run_cmd("free", &["-w"]) {
-		let used = parts[9].parse();
-		return used.ok();
-	}
+	run_cmd("free", &["-w"])
+		.and_then(|parts| parts[9].parse().ok())
+	// if let Some(parts) = run_cmd("free", &["-w"]) {
+	// 	let used = parts[9].parse();
+	// 	return used.ok();
+	// }
 
-	None
+	// None
 }
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
@@ -231,6 +242,11 @@ fn get_cpu_usage(cpu_state: &mut CpuCounts) -> Option<f32> {
 	Some((1.0 - idle_p) * 100.0)
 }
 
+fn get_cpu_temp() -> Option<f32> {
+	//x86_pkg_temp
+	None
+}
+
 fn updater(stats: Arc<RwLock<Stats>>) {
 	let mut cpu_state = CpuCounts::default();
 
@@ -244,6 +260,10 @@ fn updater(stats: Arc<RwLock<Stats>>) {
 
 			if let Some(cpu) = get_cpu_usage(&mut cpu_state) {
 				stats.cpu_usage.add(cpu);
+			}
+
+			if let Some(temp) = get_cpu_temp() {
+				stats.cpu_temp.add(temp);
 			}
 		}
 
@@ -291,17 +311,20 @@ impl MyApp {
 		let stats = Arc::new(RwLock::new(Stats {
 			used_mem: Default::default(),
 			cpu_usage: Default::default(),
+			cpu_temp: Default::default(),
 		}));
 
 		if let Ok(mut stats) = stats.write() {
 			stats.used_mem.name = "Used Memory".to_string();
 			stats.cpu_usage.name = "CPU Usage".to_string();
+			stats.cpu_temp.name = "CPU Temperature".to_string();
 
 			if let Some(max) = get_max_memory() {
 				stats.used_mem.max = max;
 			}
 
 			stats.cpu_usage.max = 100.0;
+			stats.cpu_temp.max = 100.0; // Pretty safe max
 		}
 
 		let thread_stats = Arc::clone(&stats);
