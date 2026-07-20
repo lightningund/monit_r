@@ -22,7 +22,7 @@ fn main() -> eframe::Result {
 		..Default::default()
 	};
 	eframe::run_native(
-		"Process Monitor",
+		"MonitR",
 		options,
 		Box::new(|_| {
 			Ok(Box::new(MyApp::new()))
@@ -239,7 +239,9 @@ fn get_cpu_usage(cpu_state: &mut CpuCounts) -> Option<f32> {
 }
 
 fn get_cpu_temp() -> Option<f32> {
-	//x86_pkg_temp
+	// /sys/class/thermal/thermal_zone*
+	// We want /type to be x86_pkg_temp
+	// And then we get the temp from /temp (in millidegrees Celsius)
 	None
 }
 
