@@ -13,14 +13,10 @@ static UPDATE_TIME: Duration = Duration::from_millis(200);
 fn main() -> eframe::Result {
 	let options = eframe::NativeOptions {
 		viewport: egui::ViewportBuilder::default()
-			.with_icon(std::sync::Arc::new(egui::IconData {
-				rgba: image::load_from_memory(include_bytes!("../icon.bmp"))
-					.unwrap()
-					.to_rgba8()
-					.to_vec(),
-				width: 32,
-				height: 32,
-			}))
+			.with_icon(std::sync::Arc::new(
+				eframe::icon_data::from_png_bytes(include_bytes!("../icon.png"))
+					.expect("Couldn't Load Icon")
+			))
 			.with_inner_size([500.0, 1000.0])
 			.with_drag_and_drop(true),
 		..Default::default()
