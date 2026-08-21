@@ -343,7 +343,7 @@ impl eframe::App for MyApp {
 		}
 
 		// Make sure it draws again
-		ui.request_repaint_after(UPDATE_TIME);
+		ui.request_repaint_after(UPDATE_TIME / 2);
 		// ui.request_repaint();
 	}
 }
